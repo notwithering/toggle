@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"syscall"
 
@@ -64,7 +65,7 @@ func main() {
 
 	filePath, err := filepath.Abs(fileName)
 	if err != nil {
-		exitWithError("error getting absolute path: %v", err)
+		kingpin.Fatalf("error getting absolute path: %v", err)
 	}
 
 	if len(args) > 0 {
@@ -76,12 +77,12 @@ func main() {
 	if lockfileName == "" {
 		file, err := os.Open(filePath)
 		if err != nil {
-			exitWithError("error opening file: %v", err)
+			kingpin.Fatalf("error opening file: %v", err)
 		}
 		defer file.Close()
 
 		if _, err := io.Copy(hash, file); err != nil {
-			exitWithError("error hashing file: %v", err)
+			kingpin.Fatalf("error hashing file: %v", err)
 		}
 		lockfileName = base64.RawURLEncoding.EncodeToString(hash.Sum(nil))
 	}
@@ -92,36 +93,40 @@ func main() {
 	cmd.Stdin = os.Stdin
 
 	if err := os.MkdirAll(filepath.Join(os.TempDir(), "toggle"), 0o755); err != nil {
-		exitWithError("error creating directory: %v", err)
+		kingpin.Fatalf("error creating directory: %v", err)
 	}
 
 	lockfilePath := filepath.Join(os.TempDir(), "toggle", lockfileName+".lock")
-	defer os.Remove(lockfilePath)
 
 	file, err := os.OpenFile(lockfilePath, os.O_RDONLY, 0o644)
 	var noexist bool
 	if err != nil {
 		if err.(*os.PathError).Err.Error() == "no such file or directory" {
 			noexist = true
+			defer file.Close()
 		} else {
-			exitWithError("error opening lock file: %v", err)
+			kingpin.Fatalf("error opening lock file: %v", err)
 		}
+	} else {
+		defer file.Close()
 	}
-
-	defer file.Close()
 
 	if noexist {
 		file, err = os.Create(lockfilePath)
 		if err != nil {
-			exitWithError("error creating lock file: %v", err)
+			kingpin.Fatalf("error creating lock file: %v", err)
 		}
 		defer file.Close()
 
-		err = cmd.Start()
-		if err != nil {
-			exitWithError("error starting command: %v", err)
+		if err := cmd.Start(); err != nil {
+			os.Remove(lockfilePath)
+			kingpin.Fatalf("error starting command: %v", err)
 		}
-		fmt.Fprint(file, cmd.Process.Pid)
+
+		if _, err := fmt.Fprint(file, cmd.Process.Pid); err != nil {
+			os.Remove(lockfilePath)
+			kingpin.Fatalf("error writing to lockfile: %v", err)
+		}
 
 		c := make(chan os.Signal, 1)
 		signal.Notify(c)
@@ -133,35 +138,36 @@ func main() {
 					if errors.Is(err, os.ErrProcessDone) {
 						return
 					}
-					exitWithError("error forwarding signal: %v", err)
+					kingpin.Fatalf("error forwarding signal: %v", err)
 				}
 			}
 		}()
 
 		cmd.Wait()
+		os.Remove(lockfilePath)
 	} else {
 		b, err := io.ReadAll(file)
 		if err != nil {
-			exitWithError("error reading lock file: %v", err)
+			kingpin.Fatalf("error reading lock file: %v", err)
 		}
 
 		pid, err := strconv.Atoi(string(b))
 		if err != nil {
-			exitWithError("error parsing PID: %v", err)
+			if !regexp.MustCompile("\\d+").Match(b) {
+				os.Remove(lockfilePath)
+				kingpin.Fatalf("invalid PID format; removed lock file")
+			}
+			kingpin.Fatalf("error parsing PID: %v", err)
 		}
 
 		process, err := os.FindProcess(pid)
 		if err != nil {
-			exitWithError("error finding process: %v", err)
+			os.Remove(lockfilePath)
+			kingpin.Fatalf("error finding process: %v; removed lock file", err)
 		}
 
 		if err := process.Signal(syscall.Signal(signalInt)); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			exitWithError("error sending signal: %v", err)
+			kingpin.Fatalf("error sending signal: %v", err)
 		}
 	}
-}
-
-func exitWithError(format string, args ...interface{}) {
-	kingpin.Errorf(format, args...)
-	os.Exit(1)
 }
