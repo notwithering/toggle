@@ -58,7 +58,7 @@ func main() {
 }
 
 func abs(file string) string {
-	file, err := filepath.Abs(exe)
+	file, err := filepath.Abs(file)
 	if err != nil {
 		kingpin.Fatalf("error finding absolute path: %v", err)
 	}
@@ -110,16 +110,15 @@ func openLock(lockPath string) (*os.File, bool) {
 	}
 
 	file, err := os.OpenFile(lockPath, os.O_RDONLY, 0o644)
-	var noexist bool
+
 	if err != nil {
-		if err.(*os.PathError).Err.Error() == "no such file or directory" {
-			noexist = true
-		} else {
-			kingpin.Fatalf("error opening lock file: %v", err)
+		if os.IsNotExist(err) {
+			return nil, false
 		}
+		kingpin.Fatalf("error opening lock file: %v", err)
 	}
 
-	return file, !noexist
+	return file, true
 }
 
 func getPID(lock *os.File) int {
@@ -187,4 +186,5 @@ func writePID(lock *os.File, cmd *exec.Cmd) {
 		os.Remove(lock.Name())
 		kingpin.Fatalf("error writing to lockfile: %v", err)
 	}
+	lock.Sync()
 }
