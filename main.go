@@ -28,7 +28,7 @@ var (
 	args    []string
 
 	signalFlag = kingpin.Flag("signal", "Specify a signal number to send when stopping the process.").Short('s').Default("15").Int()
-	signalInt  int
+	sig        int
 )
 
 func main() {
@@ -36,7 +36,7 @@ func main() {
 	name = *nameFlag
 	exe = *exeArg
 	args = *argsArg
-	signalInt = *signalFlag
+	sig = *signalFlag
 
 	exe = abs(exe)
 	cmd := makeCommand(exe, args)
@@ -46,7 +46,7 @@ func main() {
 	if lockExists {
 		defer lock.Close()
 		pid := getPID(lock)
-		sendSignal(pid, signalInt, lock)
+		sendSignal(pid, sig, lock)
 	} else {
 		lock = makeLock(lockPath)
 		startCommand(cmd, lock)
@@ -140,14 +140,14 @@ func getPID(lock *os.File) int {
 	return pid
 }
 
-func sendSignal(pid, signal int, lock *os.File) {
+func sendSignal(pid, sig int, lock *os.File) {
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		os.Remove(lock.Name())
 		kingpin.Fatalf("error finding process: %v; removed lock file", err)
 	}
 
-	if err := process.Signal(syscall.Signal(signalInt)); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := process.Signal(syscall.Signal(sig)); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		kingpin.Fatalf("error sending signal: %v", err)
 	}
 }
