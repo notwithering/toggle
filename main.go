@@ -21,11 +21,8 @@ var (
 	nameFlag = kingpin.Flag("name", "Specify custom lockfile name.").Short('n').String()
 	name     string
 
-	// execFlag = kingpin.Flag("exec", "Execute a command inline.").Short('e').Strings()
-	// execArgs []string
-
-	fileArg  = kingpin.Arg("file", "File to execute.").Required().ExistingFile()
-	fileName string
+	exeArg = kingpin.Arg("exe", "File to execute.").Required().ExistingFile()
+	exe    string
 
 	argsArg = kingpin.Arg("args", "Arguments to pass to the file.").Strings()
 	args    []string
@@ -37,137 +34,157 @@ var (
 func main() {
 	kingpin.Parse()
 	name = *nameFlag
-	// execArgs = *execFlag
-	fileName = *fileArg
+	exe = *exeArg
 	args = *argsArg
 	signalInt = *signalFlag
 
-	var lockfileName string = name
+	exe = abs(exe)
+	cmd := makeCommand(exe, args)
+	name = getName(exe, name)
+	lockPath := getLockPath(name)
+	lock, lockExists := openLock(lockPath)
+	if lockExists {
+		defer lock.Close()
+		pid := getPID(lock)
+		sendSignal(pid, signalInt, lock)
+	} else {
+		lock = makeLock(lockPath)
+		startCommand(cmd, lock)
+		go forwardSignals(cmd)
+		writePID(lock, cmd)
+		cmd.Wait()
+		os.Remove(lockPath)
+	}
+}
+
+func abs(file string) string {
+	file, err := filepath.Abs(exe)
+	if err != nil {
+		kingpin.Fatalf("error finding absolute path: %v", err)
+	}
+	return file
+}
+
+func makeCommand(exe string, args []string) *exec.Cmd {
 	var cmd *exec.Cmd
 
-	hash := md5.New()
-
-	// if len(execArgs) > 0 {
-	// 	var command string
-	// 	if len(execArgs) > 1 {
-	// 		cmd = exec.Command(execArgs[0], execArgs[1:]...)
-	// 		command = execArgs[0] + " " + strings.Join(execArgs[1:], " ")
-	// 	} else {
-	// 		cmd = exec.Command(execArgs[0])
-	// 		command = execArgs[0]
-	// 	}
-
-	// 	if lockfileName == "" {
-	// 		hash.Write([]byte(command))
-	// 		lockfileName = base64.RawURLEncoding.EncodeToString(hash.Sum(nil))
-	// 	}
-	// } else {
-
-	filePath, err := filepath.Abs(fileName)
-	if err != nil {
-		kingpin.Fatalf("error getting absolute path: %v", err)
-	}
-
 	if len(args) > 0 {
-		cmd = exec.Command(filePath, args...)
+		cmd = exec.Command(exe, args...)
 	} else {
-		cmd = exec.Command(filePath)
+		cmd = exec.Command(exe)
 	}
-
-	if lockfileName == "" {
-		file, err := os.Open(filePath)
-		if err != nil {
-			kingpin.Fatalf("error opening file: %v", err)
-		}
-		defer file.Close()
-
-		if _, err := io.Copy(hash, file); err != nil {
-			kingpin.Fatalf("error hashing file: %v", err)
-		}
-		lockfileName = base64.RawURLEncoding.EncodeToString(hash.Sum(nil))
-	}
-	// }
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
+	return cmd
+}
+
+func getName(exe, name string) string {
+	if name != "" {
+		return name
+	}
+
+	hash := md5.New()
+
+	file, err := os.Open(exe)
+	if err != nil {
+		kingpin.Fatalf("error opening file: %v", err)
+	}
+	defer file.Close()
+
+	if _, err := io.Copy(hash, file); err != nil {
+		kingpin.Fatalf("error hashing file: %v", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(hash.Sum(nil))
+}
+
+func getLockPath(name string) string {
+	return filepath.Join(os.TempDir(), "toggle", name+".lock")
+}
+
+func openLock(lockPath string) (*os.File, bool) {
 	if err := os.MkdirAll(filepath.Join(os.TempDir(), "toggle"), 0o755); err != nil {
 		kingpin.Fatalf("error creating directory: %v", err)
 	}
 
-	lockfilePath := filepath.Join(os.TempDir(), "toggle", lockfileName+".lock")
-
-	file, err := os.OpenFile(lockfilePath, os.O_RDONLY, 0o644)
+	file, err := os.OpenFile(lockPath, os.O_RDONLY, 0o644)
 	var noexist bool
 	if err != nil {
 		if err.(*os.PathError).Err.Error() == "no such file or directory" {
 			noexist = true
-			defer file.Close()
 		} else {
 			kingpin.Fatalf("error opening lock file: %v", err)
 		}
-	} else {
-		defer file.Close()
 	}
 
-	if noexist {
-		file, err = os.Create(lockfilePath)
-		if err != nil {
-			kingpin.Fatalf("error creating lock file: %v", err)
+	return file, !noexist
+}
+
+func getPID(lock *os.File) int {
+	b, err := io.ReadAll(lock)
+	if err != nil {
+		kingpin.Fatalf("error reading lock file: %v", err)
+	}
+
+	pid, err := strconv.Atoi(string(b))
+	if err != nil {
+		if !regexp.MustCompile("\\d+").Match(b) {
+			os.Remove(lock.Name())
+			kingpin.Fatalf("invalid PID format; removed lock file")
 		}
-		defer file.Close()
+		kingpin.Fatalf("error parsing PID: %v", err)
+	}
 
-		if err := cmd.Start(); err != nil {
-			os.Remove(lockfilePath)
-			kingpin.Fatalf("error starting command: %v", err)
-		}
+	return pid
+}
 
-		if _, err := fmt.Fprint(file, cmd.Process.Pid); err != nil {
-			os.Remove(lockfilePath)
-			kingpin.Fatalf("error writing to lockfile: %v", err)
-		}
+func sendSignal(pid, signal int, lock *os.File) {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		os.Remove(lock.Name())
+		kingpin.Fatalf("error finding process: %v; removed lock file", err)
+	}
 
-		c := make(chan os.Signal, 1)
-		signal.Notify(c)
+	if err := process.Signal(syscall.Signal(signalInt)); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		kingpin.Fatalf("error sending signal: %v", err)
+	}
+}
 
-		go func() {
-			for {
-				sig := <-c
-				if err := cmd.Process.Signal(sig); err != nil {
-					if errors.Is(err, os.ErrProcessDone) {
-						return
-					}
-					kingpin.Fatalf("error forwarding signal: %v", err)
-				}
+func makeLock(lockPath string) *os.File {
+	file, err := os.Create(lockPath)
+	if err != nil {
+		kingpin.Fatalf("error creating lock file: %v", err)
+	}
+	return file
+}
+
+func startCommand(cmd *exec.Cmd, lock *os.File) {
+	if err := cmd.Start(); err != nil {
+		os.Remove(lock.Name())
+		kingpin.Fatalf("error starting command: %v", err)
+	}
+}
+
+func forwardSignals(cmd *exec.Cmd) {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c)
+
+	for {
+		sig := <-c
+		if err := cmd.Process.Signal(sig); err != nil {
+			if errors.Is(err, os.ErrProcessDone) {
+				return
 			}
-		}()
-
-		cmd.Wait()
-		os.Remove(lockfilePath)
-	} else {
-		b, err := io.ReadAll(file)
-		if err != nil {
-			kingpin.Fatalf("error reading lock file: %v", err)
+			kingpin.Fatalf("error forwarding signal: %v", err)
 		}
+	}
+}
 
-		pid, err := strconv.Atoi(string(b))
-		if err != nil {
-			if !regexp.MustCompile("\\d+").Match(b) {
-				os.Remove(lockfilePath)
-				kingpin.Fatalf("invalid PID format; removed lock file")
-			}
-			kingpin.Fatalf("error parsing PID: %v", err)
-		}
-
-		process, err := os.FindProcess(pid)
-		if err != nil {
-			os.Remove(lockfilePath)
-			kingpin.Fatalf("error finding process: %v; removed lock file", err)
-		}
-
-		if err := process.Signal(syscall.Signal(signalInt)); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			kingpin.Fatalf("error sending signal: %v", err)
-		}
+func writePID(lock *os.File, cmd *exec.Cmd) {
+	if _, err := fmt.Fprint(lock, cmd.Process.Pid); err != nil {
+		os.Remove(lock.Name())
+		kingpin.Fatalf("error writing to lockfile: %v", err)
 	}
 }
