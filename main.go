@@ -49,6 +49,7 @@ func main() {
 		sendSignal(pid, sig, lock)
 	} else {
 		lock = makeLock(lockPath)
+		defer lock.Close()
 		startCommand(cmd, lock)
 		go forwardSignals(cmd)
 		writePID(lock, cmd)
