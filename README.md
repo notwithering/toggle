@@ -1,12 +1,12 @@
 # toggle
 
-toggle is a go program that acts as a toggle by lockfile for any program
+**toggle** is a tiny go tool that acts as a toggle for any program using a lockfile.
 
-it works by accepting a program in the arguments and creaing a lockfile for it (by hash or by specified name). it starts the program and places the PID in the lockfile. when another instance of toggle tries to open the same program (program with same hash or same specified name) it will read the lockfile and send a signal to it specified by --signal or default SIGTERM
+you run it with a program like `toggle myscript.sh` - it creates a lockfile (by hash or name with `--name`), starts the program, and saves its PID.
 
-this is useful if you have a hotkey that starts an inifinite loop script (like an autoclicker) that needs to be killed with the same hotkey
+next time you run the same toggle, it finds the lockfile, reads the PID, and sends it a signal (default SIGTERM, or custom with `--signal`).
 
-in the hotkey you can specifiy it to run `toggle myscript.sh` or `toggle a.out`. the first time you press the hotkey it will start, the next time you press the hotkey it will terminate
+handy for hotkeys that launch infinite loop scripts (like autoclickers) - press once to start, press again to kill.
 
 ```c
 go install github.com/notwithering/toggle@latest
