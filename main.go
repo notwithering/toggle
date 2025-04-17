@@ -27,7 +27,7 @@ var (
 	argsArg = kingpin.Arg("args", "Arguments to pass to the file.").Strings()
 	args    []string
 
-	signalFlag = kingpin.Flag("signal", "Specify a signal number to send when stopping the process.").Short('s').Default("15").Int()
+	signalFlag = kingpin.Flag("signal", "Specify a signal number to send when stopping the process.").Short('s').Default(strconv.Itoa(int(syscall.SIGTERM))).Int()
 	sig        int
 )
 
