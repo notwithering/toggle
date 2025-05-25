@@ -14,39 +14,31 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/alecthomas/kingpin/v2"
+	"github.com/alecthomas/kong"
 )
 
-var (
-	nameFlag = kingpin.Flag("name", "Specify custom lockfile name.").Short('n').String()
-	name     string
+var cli struct {
+	Name   string     `kong:"help='Specify custom lockfile name.',short='n'"`
+	Signal KongSignal `kong:"help='Specify a signal to send when stopping the process.',short='s',default='TERM'"`
 
-	exeArg = kingpin.Arg("exe", "File to execute.").Required().ExistingFile()
-	exe    string
+	Exe  string   `kong:"arg,required,type='existingfile'"`
+	Args []string `kong:"arg,optional"`
+}
 
-	argsArg = kingpin.Arg("args", "Arguments to pass to the file.").Strings()
-	args    []string
-
-	signalFlag = kingpin.Flag("signal", "Specify a signal number to send when stopping the process.").Short('s').Default(strconv.Itoa(int(syscall.SIGTERM))).Int()
-	sig        int
-)
+var kc *kong.Context
 
 func main() {
-	kingpin.Parse()
-	name = *nameFlag
-	exe = *exeArg
-	args = *argsArg
-	sig = *signalFlag
+	kc = kong.Parse(&cli)
 
-	exe = abs(exe)
-	cmd := makeCommand(exe, args)
-	name = getName(exe, name)
+	exe := abs(cli.Exe)
+	cmd := makeCommand(cli.Exe, cli.Args)
+	name := getName(exe, cli.Name)
 	lockPath := getLockPath(name)
 	lock, lockExists := openLock(lockPath)
 	if lockExists {
 		defer lock.Close()
 		pid := getPID(lock)
-		sendSignal(pid, sig, lock)
+		sendSignal(pid, int(cli.Signal), lock)
 	} else {
 		lock = makeLock(lockPath)
 		defer lock.Close()
@@ -61,7 +53,7 @@ func main() {
 func abs(file string) string {
 	file, err := filepath.Abs(file)
 	if err != nil {
-		kingpin.Fatalf("error finding absolute path: %v", err)
+		kc.Fatalf("error finding absolute path: %v", err)
 	}
 	return file
 }
@@ -91,12 +83,12 @@ func getName(exe, name string) string {
 
 	file, err := os.Open(exe)
 	if err != nil {
-		kingpin.Fatalf("error opening file: %v", err)
+		kc.Fatalf("error opening file: %v", err)
 	}
 	defer file.Close()
 
 	if _, err := io.Copy(hash, file); err != nil {
-		kingpin.Fatalf("error hashing file: %v", err)
+		kc.Fatalf("error hashing file: %v", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(hash.Sum(nil))
 }
@@ -107,7 +99,7 @@ func getLockPath(name string) string {
 
 func openLock(lockPath string) (*os.File, bool) {
 	if err := os.MkdirAll(filepath.Join(os.TempDir(), "toggle"), 0o755); err != nil {
-		kingpin.Fatalf("error creating directory: %v", err)
+		kc.Fatalf("error creating directory: %v", err)
 	}
 
 	file, err := os.OpenFile(lockPath, os.O_RDONLY, 0o644)
@@ -116,7 +108,7 @@ func openLock(lockPath string) (*os.File, bool) {
 		if os.IsNotExist(err) {
 			return nil, false
 		}
-		kingpin.Fatalf("error opening lock file: %v", err)
+		kc.Fatalf("error opening lock file: %v", err)
 	}
 
 	return file, true
@@ -125,16 +117,16 @@ func openLock(lockPath string) (*os.File, bool) {
 func getPID(lock *os.File) int {
 	b, err := io.ReadAll(lock)
 	if err != nil {
-		kingpin.Fatalf("error reading lock file: %v", err)
+		kc.Fatalf("error reading lock file: %v", err)
 	}
 
 	pid, err := strconv.Atoi(string(b))
 	if err != nil {
 		if !regexp.MustCompile("\\d+").Match(b) {
 			os.Remove(lock.Name())
-			kingpin.Fatalf("invalid PID format; removed lock file")
+			kc.Fatalf("invalid PID format; removed lock file")
 		}
-		kingpin.Fatalf("error parsing PID: %v", err)
+		kc.Fatalf("error parsing PID: %v", err)
 	}
 
 	return pid
@@ -144,18 +136,18 @@ func sendSignal(pid, sig int, lock *os.File) {
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		os.Remove(lock.Name())
-		kingpin.Fatalf("error finding process: %v; removed lock file", err)
+		kc.Fatalf("error finding process: %v; removed lock file", err)
 	}
 
 	if err := process.Signal(syscall.Signal(sig)); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		kingpin.Fatalf("error sending signal: %v", err)
+		kc.Fatalf("error sending signal: %v", err)
 	}
 }
 
 func makeLock(lockPath string) *os.File {
 	file, err := os.Create(lockPath)
 	if err != nil {
-		kingpin.Fatalf("error creating lock file: %v", err)
+		kc.Fatalf("error creating lock file: %v", err)
 	}
 	return file
 }
@@ -163,7 +155,7 @@ func makeLock(lockPath string) *os.File {
 func startCommand(cmd *exec.Cmd, lock *os.File) {
 	if err := cmd.Start(); err != nil {
 		os.Remove(lock.Name())
-		kingpin.Fatalf("error starting command: %v", err)
+		kc.Fatalf("error starting command: %v", err)
 	}
 }
 
@@ -177,7 +169,7 @@ func forwardSignals(cmd *exec.Cmd) {
 			if errors.Is(err, os.ErrProcessDone) {
 				return
 			}
-			kingpin.Fatalf("error forwarding signal: %v", err)
+			kc.Fatalf("error forwarding signal: %v", err)
 		}
 	}
 }
@@ -185,7 +177,7 @@ func forwardSignals(cmd *exec.Cmd) {
 func writePID(lock *os.File, cmd *exec.Cmd) {
 	if _, err := fmt.Fprint(lock, cmd.Process.Pid); err != nil {
 		os.Remove(lock.Name())
-		kingpin.Fatalf("error writing to lockfile: %v", err)
+		kc.Fatalf("error writing to lockfile: %v", err)
 	}
 	lock.Sync()
 }
