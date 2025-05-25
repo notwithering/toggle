@@ -31,7 +31,7 @@ func main() {
 	kc = kong.Parse(&cli)
 
 	exe := abs(cli.Exe)
-	cmd := makeCommand(cli.Exe, cli.Args)
+	cmd := makeCommand(exe, cli.Args)
 	name := getName(exe, cli.Name)
 	lockPath := getLockPath(name)
 	lock, lockExists := openLock(lockPath)
@@ -59,14 +59,7 @@ func abs(file string) string {
 }
 
 func makeCommand(exe string, args []string) *exec.Cmd {
-	var cmd *exec.Cmd
-
-	if len(args) > 0 {
-		cmd = exec.Command(exe, args...)
-	} else {
-		cmd = exec.Command(exe)
-	}
-
+	cmd := exec.Command(exe, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
