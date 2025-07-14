@@ -115,7 +115,7 @@ func getPID(lock *os.File) int {
 
 	pid, err := strconv.Atoi(string(b))
 	if err != nil {
-		if !regexp.MustCompile("\\d+").Match(b) {
+		if !regexp.MustCompile(`\d+`).Match(b) {
 			os.Remove(lock.Name())
 			kc.Fatalf("invalid PID format; removed lock file")
 		}
