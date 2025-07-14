@@ -44,7 +44,7 @@ func main() {
 		defer lock.Close()
 		startCommand(cmd, lock)
 		go forwardSignals(cmd)
-		writePID(lock, cmd)
+		writePID(lock, cmd.Process.Pid)
 		cmd.Wait()
 		os.Remove(lockPath)
 	}
@@ -167,8 +167,8 @@ func forwardSignals(cmd *exec.Cmd) {
 	}
 }
 
-func writePID(lock *os.File, cmd *exec.Cmd) {
-	if _, err := fmt.Fprint(lock, cmd.Process.Pid); err != nil {
+func writePID(lock *os.File, pid int) {
+	if _, err := fmt.Fprint(lock, pid); err != nil {
 		os.Remove(lock.Name())
 		kc.Fatalf("error writing to lockfile: %v", err)
 	}
