@@ -6,7 +6,7 @@ you run it with a program like `toggle myscript.sh` - it creates a lockfile (by 
 
 next time you run the same toggle, it finds the lockfile, reads the PID, and sends it a signal (default SIGTERM, or custom with `--signal`)
 
-good for hotkeys that launch infinite loop scripts (like autoclickers) - press once to start, press again to terminate
+good for hotkeys that launch infinite loop scripts (like macros) - press once to start, press again to terminate
 
 ```c
 go install github.com/notwithering/toggle@latest
