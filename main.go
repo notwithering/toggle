@@ -17,17 +17,16 @@ import (
 	"github.com/alecthomas/kong"
 )
 
-var cli struct {
-	Name   string     `kong:"help='Specify custom lockfile name.',short='n'"`
-	Signal KongSignal `kong:"help='Specify a signal to send when stopping the process.',short='s',default='TERM'"`
-
-	Exe  string   `kong:"arg,required,type='existingfile'"`
-	Args []string `kong:"arg,optional"`
-}
-
 var kc *kong.Context
 
 func main() {
+	var cli struct {
+		Name   string     `kong:"help='Specify custom lockfile name.',short='n'"`
+		Signal KongSignal `kong:"help='Specify a signal to send when stopping the process.',short='s',default='TERM'"`
+
+		Exe  string   `kong:"arg,required,type='existingfile'"`
+		Args []string `kong:"arg,optional"`
+	}
 	kc = kong.Parse(&cli)
 
 	exe := abs(cli.Exe)
