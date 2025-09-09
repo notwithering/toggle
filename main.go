@@ -32,18 +32,22 @@ func main() {
 	exe := abs(cli.Exe)
 	cmd := makeCommand(exe, cli.Args)
 	name := getName(exe, cli.Name)
+
 	lockPath := getLockPath(name)
 	lock, lockExists := openLock(lockPath)
 	if lockExists {
 		defer lock.Close()
+
 		pid := getPID(lock)
 		sendSignal(pid, syscall.Signal(cli.Signal), lock)
 	} else {
 		lock = makeLock(lockPath)
 		defer lock.Close()
+
 		startCommand(cmd, lock)
 		go forwardSignals(cmd)
 		writePID(lock, cmd.Process.Pid)
+
 		cmd.Wait()
 		os.Remove(lockPath)
 	}
