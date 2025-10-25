@@ -30,10 +30,9 @@ func main() {
 	kc = kong.Parse(&cli)
 
 	exe := abs(cli.Exe)
-	cmd := makeCommand(exe, cli.Args)
 	name := getName(exe, cli.Name)
-
 	lockPath := getLockPath(name)
+
 	lock, lockExists := openLock(lockPath)
 	if lockExists {
 		defer lock.Close()
@@ -44,9 +43,10 @@ func main() {
 		lock = makeLock(lockPath)
 		defer lock.Close()
 
+		cmd := makeCommand(exe, cli.Args)
 		startCommand(cmd, lock)
-		go forwardSignals(cmd)
 		writePID(lock, cmd.Process.Pid)
+		go forwardSignals(cmd)
 
 		cmd.Wait()
 		os.Remove(lockPath)
@@ -59,15 +59,6 @@ func abs(file string) string {
 		kc.Fatalf("error finding absolute path: %v", err)
 	}
 	return file
-}
-
-func makeCommand(exe string, args []string) *exec.Cmd {
-	cmd := exec.Command(exe, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-
-	return cmd
 }
 
 func getName(exe, name string) string {
@@ -148,11 +139,28 @@ func makeLock(lockPath string) *os.File {
 	return file
 }
 
+func makeCommand(exe string, args []string) *exec.Cmd {
+	cmd := exec.Command(exe, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	return cmd
+}
+
 func startCommand(cmd *exec.Cmd, lock *os.File) {
 	if err := cmd.Start(); err != nil {
 		os.Remove(lock.Name())
 		kc.Fatalf("error starting command: %v", err)
 	}
+}
+
+func writePID(lock *os.File, pid int) {
+	if _, err := fmt.Fprint(lock, pid); err != nil {
+		os.Remove(lock.Name())
+		kc.Fatalf("error writing to lockfile: %v", err)
+	}
+	lock.Sync()
 }
 
 func forwardSignals(cmd *exec.Cmd) {
@@ -168,12 +176,4 @@ func forwardSignals(cmd *exec.Cmd) {
 			kc.Fatalf("error forwarding signal: %v", err)
 		}
 	}
-}
-
-func writePID(lock *os.File, pid int) {
-	if _, err := fmt.Fprint(lock, pid); err != nil {
-		os.Remove(lock.Name())
-		kc.Fatalf("error writing to lockfile: %v", err)
-	}
-	lock.Sync()
 }
